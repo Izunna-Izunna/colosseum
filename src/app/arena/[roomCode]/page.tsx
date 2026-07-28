@@ -3,8 +3,18 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { supabase, getGuestId, getGuestName, setGuestName } from "@/lib/supabase";
-import { getRoomByCode, joinRoom, updateRoomStatus, type Room } from "@/lib/room";
+import {
+  supabase,
+  getGuestId,
+  getGuestName,
+  setGuestName,
+} from "@/lib/supabase";
+import {
+  getRoomByCode,
+  joinRoom,
+  updateRoomStatus,
+  type Room,
+} from "@/lib/room";
 import { initPoseDetector, detectPose } from "@/lib/pose-detection";
 import { RepTracker } from "@/lib/rep-tracker";
 import {
@@ -41,7 +51,9 @@ export default function ArenaPage() {
   const [phase, setPhase] = useState<ArenaPhase>("loading");
   const [room, setRoom] = useState<Room | null>(null);
   const [mySlot, setMySlot] = useState<"A" | "B" | null>(null);
-  const [gameState, setGameState] = useState<GameState>(createInitialGameState());
+  const [gameState, setGameState] = useState<GameState>(
+    createInitialGameState(),
+  );
   const [isReady, setIsReady] = useState(false);
   const [opponentReady, setOpponentReady] = useState(false);
   const [opponentConnected, setOpponentConnected] = useState(false);
@@ -49,7 +61,8 @@ export default function ArenaPage() {
   const [error, setError] = useState<string | null>(null);
 
   // Accept/Decline Challenge state
-  const [pendingChallenger, setPendingChallenger] = useState<PendingChallenger | null>(null);
+  const [pendingChallenger, setPendingChallenger] =
+    useState<PendingChallenger | null>(null);
   const [isAccepting, setIsAccepting] = useState(false);
   const [isDeclined, setIsDeclined] = useState(false);
 
@@ -148,9 +161,25 @@ export default function ArenaPage() {
         const opponentPresent = keys.some((k) => k !== pid);
         setOpponentConnected(opponentPresent);
 
+        if (
+          opponentPresent &&
+          initialSlot === "A" &&
+          !fetchedRoom.player_b_id
+        ) {
+          getRoomByCode(roomCode).then((updated) => {
+            if (updated?.player_b_id && mounted) {
+              setRoom(updated);
+              setPhase("calibrating");
+            }
+          });
+        }
+
         for (const key of keys) {
           if (key !== pid) {
-            const entries = presenceState[key] as Array<{ ready?: boolean; role?: string }>;
+            const entries = presenceState[key] as Array<{
+              ready?: boolean;
+              role?: string;
+            }>;
             if (entries && entries.length > 0) {
               setOpponentReady(entries[0].ready === true);
             }
@@ -186,21 +215,29 @@ export default function ArenaPage() {
         }
       });
 
-      channel.on("broadcast", { event: "challenge_accepted" }, ({ payload }) => {
-        // Challenger (Player B) receives acceptance
-        if (payload.challengerId === pid || initialSlot === "A") {
-          setPendingChallenger(null);
-          setPhase("calibrating");
-          // Refresh room state
-          getRoomByCode(roomCode).then((r) => r && setRoom(r));
-        }
-      });
+      channel.on(
+        "broadcast",
+        { event: "challenge_accepted" },
+        ({ payload }) => {
+          // Challenger (Player B) receives acceptance
+          if (payload.challengerId === pid || initialSlot === "A") {
+            setPendingChallenger(null);
+            setPhase("calibrating");
+            // Refresh room state
+            getRoomByCode(roomCode).then((r) => r && setRoom(r));
+          }
+        },
+      );
 
-      channel.on("broadcast", { event: "challenge_declined" }, ({ payload }) => {
-        if (payload.challengerId === pid) {
-          setIsDeclined(true);
-        }
-      });
+      channel.on(
+        "broadcast",
+        { event: "challenge_declined" },
+        ({ payload }) => {
+          if (payload.challengerId === pid) {
+            setIsDeclined(true);
+          }
+        },
+      );
 
       // Match Broadcast Events
       channel.on("broadcast", { event: "countdown_start" }, () => {
@@ -226,7 +263,9 @@ export default function ArenaPage() {
           const winner = checkWinCondition(newState);
           if (winner) {
             const winnerId =
-              winner === "A" ? fetchedRoom.player_a_id : fetchedRoom.player_b_id;
+              winner === "A"
+                ? fetchedRoom.player_a_id
+                : fetchedRoom.player_b_id;
             channel.send({
               type: "broadcast",
               event: "duel_end",
@@ -248,13 +287,13 @@ export default function ArenaPage() {
           winnerName: isWinner
             ? playerName.current
             : fetchedRoom.player_a_id === payload.winnerId
-            ? fetchedRoom.player_a_name
-            : fetchedRoom.player_b_name,
+              ? fetchedRoom.player_a_name
+              : fetchedRoom.player_b_name,
           loserName: !isWinner
             ? playerName.current
             : fetchedRoom.player_a_id !== payload.winnerId
-            ? fetchedRoom.player_a_name
-            : fetchedRoom.player_b_name,
+              ? fetchedRoom.player_a_name
+              : fetchedRoom.player_b_name,
           winnerReps:
             payload.winnerId === fetchedRoom.player_a_id
               ? finalState.playerAReps
@@ -275,7 +314,7 @@ export default function ArenaPage() {
 
         sessionStorage.setItem(
           `duel_result_${roomCode}`,
-          JSON.stringify(resultData)
+          JSON.stringify(resultData),
         );
 
         if (animFrameRef.current) {
@@ -345,10 +384,10 @@ export default function ArenaPage() {
       const updated = await joinRoom(
         roomCode,
         pendingChallenger.id,
-        pendingChallenger.name
+        pendingChallenger.name,
       );
 
-      if (updated || room) {
+      if (updated) {
         if (channelRef.current) {
           channelRef.current.send({
             type: "broadcast",
@@ -466,9 +505,14 @@ export default function ArenaPage() {
             setExtensionProgress(
               Math.min(
                 100,
-                ((repTrackerRef.current as unknown as { extensionSamples: unknown[] })
-                  .extensionSamples?.length ?? 0) / 15 * 100
-              )
+                (((
+                  repTrackerRef.current as unknown as {
+                    extensionSamples: unknown[];
+                  }
+                ).extensionSamples?.length ?? 0) /
+                  15) *
+                  100,
+              ),
             );
             if (done) setExtensionProgress(100);
           }
@@ -476,9 +520,12 @@ export default function ArenaPage() {
             setTopProgress(
               Math.min(
                 100,
-                ((repTrackerRef.current as unknown as { topSamples: unknown[] })
-                  .topSamples?.length ?? 0) / 30 * 100
-              )
+                (((
+                  repTrackerRef.current as unknown as { topSamples: unknown[] }
+                ).topSamples?.length ?? 0) /
+                  30) *
+                  100,
+              ),
             );
             if (done) setTopProgress(100);
           }
@@ -496,7 +543,7 @@ export default function ArenaPage() {
       videoRef.current = video;
       startPoseLoop();
     },
-    [startPoseLoop]
+    [startPoseLoop],
   );
 
   const handleToggleReady = () => {
@@ -552,7 +599,10 @@ export default function ArenaPage() {
           >
             Oops
           </h2>
-          <p className="text-sm mb-6" style={{ color: "var(--col-text-muted)" }}>
+          <p
+            className="text-sm mb-6"
+            style={{ color: "var(--col-text-muted)" }}
+          >
             {error}
           </p>
           <button
@@ -585,7 +635,10 @@ export default function ArenaPage() {
             >
               Enter the Arena
             </h3>
-            <p className="text-sm mb-4" style={{ color: "var(--col-text-muted)" }}>
+            <p
+              className="text-sm mb-4"
+              style={{ color: "var(--col-text-muted)" }}
+            >
               Choose a display name before stepping into the duel.
             </p>
             <input
@@ -635,7 +688,10 @@ export default function ArenaPage() {
           <div className="flex items-center gap-3">
             <div
               className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin"
-              style={{ borderColor: "var(--col-purple)", borderTopColor: "transparent" }}
+              style={{
+                borderColor: "var(--col-purple)",
+                borderTopColor: "transparent",
+              }}
             />
             <span style={{ color: "var(--col-text-muted)" }}>
               Entering the Arena...
@@ -660,7 +716,10 @@ export default function ArenaPage() {
             >
               Challenge Declined
             </h2>
-            <p className="text-sm mb-6" style={{ color: "var(--col-text-muted)" }}>
+            <p
+              className="text-sm mb-6"
+              style={{ color: "var(--col-text-muted)" }}
+            >
               The host declined your challenge for this duel.
             </p>
             <button
@@ -673,238 +732,278 @@ export default function ArenaPage() {
         )}
 
         {/* Active Camera View (Waiting, Requesting, Calibrating, Fighting) */}
-        {!isDeclined && (phase === "waiting" || phase === "requesting" || phase === "calibrating" || phase === "fighting" || phase === "countdown") && (
-          <div className="w-full max-w-4xl">
-            {/* Dual Webcam Layout */}
-            <div className="grid md:grid-cols-2 gap-4 mb-6">
-              {/* My Camera Feed */}
-              <div className="relative">
-                <WebcamView
-                  onVideoReady={handleVideoReady}
-                  mirror={true}
-                  label={`${myName} (You)`}
-                  className="w-full"
-                />
-                {phase === "calibrating" && (
-                  <div
-                    className="absolute top-3 right-3 px-2 py-1 rounded-lg text-xs font-bold"
-                    style={{
-                      background: calibrationStep === "done"
-                        ? "rgba(34, 197, 94, 0.2)"
-                        : "rgba(124, 58, 237, 0.2)",
-                      color: calibrationStep === "done"
-                        ? "#4ade80"
-                        : "var(--col-purple-light)",
-                      border: `1px solid ${
-                        calibrationStep === "done"
-                          ? "rgba(34, 197, 94, 0.3)"
-                          : "rgba(124, 58, 237, 0.3)"
-                      }`,
-                    }}
-                  >
-                    {calibrationStep === "done" ? "✓ Calibrated" : "Calibrating..."}
-                  </div>
-                )}
-              </div>
-
-              {/* Opponent / Waiting Container */}
-              <div
-                className="relative rounded-2xl flex items-center justify-center p-6 text-center overflow-hidden"
-                style={{
-                  background: "rgba(0, 0, 0, 0.3)",
-                  border: "2px solid var(--col-border)",
-                  aspectRatio: "4/3",
-                }}
-              >
-                {/* Host Accept / Decline Banner */}
-                {pendingChallenger ? (
-                  <motion.div
-                    initial={{ scale: 0.9, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    className="flex flex-col items-center gap-4 z-10"
-                  >
-                    <div className="text-4xl animate-bounce">⚔️</div>
+        {!isDeclined &&
+          (phase === "waiting" ||
+            phase === "requesting" ||
+            phase === "calibrating" ||
+            phase === "fighting" ||
+            phase === "countdown") && (
+            <div className="w-full max-w-4xl">
+              {/* Dual Webcam Layout */}
+              <div className="grid md:grid-cols-2 gap-4 mb-6">
+                {/* My Camera Feed */}
+                <div className="relative">
+                  <WebcamView
+                    onVideoReady={handleVideoReady}
+                    mirror={true}
+                    label={`${myName} (You)`}
+                    className="w-full"
+                  />
+                  {phase === "calibrating" && (
                     <div
-                      className="text-xl font-bold"
+                      className="absolute top-3 right-3 px-2 py-1 rounded-lg text-xs font-bold"
                       style={{
-                        color: "var(--col-text)",
-                        fontFamily: "var(--font-heading, Outfit, sans-serif)",
+                        background:
+                          calibrationStep === "done"
+                            ? "rgba(34, 197, 94, 0.2)"
+                            : "rgba(124, 58, 237, 0.2)",
+                        color:
+                          calibrationStep === "done"
+                            ? "#4ade80"
+                            : "var(--col-purple-light)",
+                        border: `1px solid ${
+                          calibrationStep === "done"
+                            ? "rgba(34, 197, 94, 0.3)"
+                            : "rgba(124, 58, 237, 0.3)"
+                        }`,
                       }}
                     >
-                      {pendingChallenger.name} wants to duel you!
+                      {calibrationStep === "done"
+                        ? "✓ Calibrated"
+                        : "Calibrating..."}
                     </div>
-                    <p className="text-xs" style={{ color: "var(--col-text-muted)" }}>
-                      Accept the challenge to start camera calibration.
-                    </p>
-
-                    <div className="flex gap-3 mt-2">
-                      <button
-                        onClick={handleAcceptChallenge}
-                        disabled={isAccepting}
-                        className="btn-primary px-6 py-2.5 text-sm"
-                      >
-                        {isAccepting ? "Accepting..." : "✓ Accept Challenge"}
-                      </button>
-                      <button
-                        onClick={handleDeclineChallenge}
-                        className="btn-secondary px-4 py-2.5 text-sm"
-                      >
-                        ✕ Decline
-                      </button>
-                    </div>
-                  </motion.div>
-                ) : phase === "requesting" ? (
-                  /* Challenger Requesting State */
-                  <div className="flex flex-col items-center gap-3">
-                    <div
-                      className="w-10 h-10 border-3 border-t-transparent rounded-full animate-spin"
-                      style={{ borderColor: "var(--col-cyan)", borderTopColor: "transparent" }}
-                    />
-                    <div
-                      className="font-bold text-lg"
-                      style={{
-                        color: "var(--col-text)",
-                        fontFamily: "var(--font-heading, Outfit, sans-serif)",
-                      }}
-                    >
-                      Challenging Host...
-                    </div>
-                    <p className="text-xs max-w-xs" style={{ color: "var(--col-text-muted)" }}>
-                      Waiting for the host to accept your duel request.
-                    </p>
-                  </div>
-                ) : (
-                  /* Standard Opponent Connected or Waiting */
-                  <div className="text-center">
-                    <div
-                      className="w-20 h-20 rounded-full mx-auto mb-4 flex items-center justify-center text-3xl font-bold"
-                      style={{
-                        background: "linear-gradient(135deg, #ff6b35, #ff3d00)",
-                        fontFamily: "var(--font-heading, Outfit, sans-serif)",
-                      }}
-                    >
-                      {opponentName.charAt(0).toUpperCase()}
-                    </div>
-                    <div
-                      className="font-bold text-lg"
-                      style={{
-                        color: "var(--col-text)",
-                        fontFamily: "var(--font-heading, Outfit, sans-serif)",
-                      }}
-                    >
-                      {opponentName}
-                    </div>
-                    <div
-                      className="text-xs mt-1"
-                      style={{ color: "var(--col-text-muted)" }}
-                    >
-                      {opponentConnected ? "Connected" : "Waiting for challenger..."}
-                    </div>
-                  </div>
-                )}
-
-                {/* Decorative corners */}
-                <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 rounded-tl-lg" style={{ borderColor: "var(--col-orange)" }} />
-                <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 rounded-tr-lg" style={{ borderColor: "var(--col-orange)" }} />
-                <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 rounded-bl-lg" style={{ borderColor: "var(--col-orange)" }} />
-                <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 rounded-br-lg" style={{ borderColor: "var(--col-orange)" }} />
-              </div>
-            </div>
-
-            {/* Waiting for Challenger Bar — Host can see room code + copy link */}
-            {phase === "waiting" && !pendingChallenger && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="glass-panel p-4 text-center mb-6"
-              >
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-                  <div className="text-left">
-                    <div
-                      className="text-sm font-bold"
-                      style={{
-                        color: "var(--col-text)",
-                        fontFamily: "var(--font-heading, Outfit, sans-serif)",
-                      }}
-                    >
-                      📷 Camera active! Adjust your setup while waiting.
-                    </div>
-                    <div className="text-xs" style={{ color: "var(--col-text-muted)" }}>
-                      Share this arena link with your challenger to duel.
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="px-4 py-2 rounded-xl font-black tracking-widest text-lg"
-                      style={{
-                        background: "rgba(0, 0, 0, 0.4)",
-                        border: "1px solid var(--col-purple)",
-                        color: "var(--col-cyan)",
-                        fontFamily: "var(--font-heading, Outfit, sans-serif)",
-                      }}
-                    >
-                      {roomCode}
-                    </div>
-                    <button onClick={handleCopy} className="btn-primary text-xs py-2 px-4">
-                      {copied ? "✓ Copied Link!" : "🔗 Share Link"}
-                    </button>
-                  </div>
+                  )}
                 </div>
-              </motion.div>
-            )}
 
-            {/* Calibration Overlay */}
-            {phase === "calibrating" && (
-              <CalibrationOverlay
-                step={calibrationStep}
-                isReady={isReady}
-                opponentReady={opponentReady}
-                onStartExtensionCalibration={() => {
-                  setCalibrationStep("extension");
-                  repTrackerRef.current?.startCalibrationExtension();
-                }}
-                onStartTopCalibration={() => {
-                  setCalibrationStep("top");
-                  repTrackerRef.current?.startCalibrationTop();
-                }}
-                onFinalizeCalibration={() => {
-                  const success = repTrackerRef.current?.finalizeCalibration();
-                  if (success) {
-                    setCalibrationStep("done");
-                  }
-                }}
-                onToggleReady={handleToggleReady}
-                extensionProgress={extensionProgress}
-                topProgress={topProgress}
-              />
-            )}
-
-            {/* Live Indicator */}
-            {phase === "fighting" && (
-              <div className="text-center mt-4">
+                {/* Opponent / Waiting Container */}
                 <div
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full"
+                  className="relative rounded-2xl flex items-center justify-center p-6 text-center overflow-hidden"
                   style={{
-                    background: "rgba(255, 0, 51, 0.15)",
-                    border: "1px solid rgba(255, 0, 51, 0.3)",
+                    background: "rgba(0, 0, 0, 0.3)",
+                    border: "2px solid var(--col-border)",
+                    aspectRatio: "4/3",
                   }}
                 >
-                  <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                  <span
-                    className="text-sm font-bold"
-                    style={{
-                      color: "#ff6b6b",
-                      fontFamily: "var(--font-heading, Outfit, sans-serif)",
-                    }}
-                  >
-                    LIVE — DUEL IN PROGRESS
-                  </span>
+                  {/* Host Accept / Decline Banner */}
+                  {pendingChallenger ? (
+                    <motion.div
+                      initial={{ scale: 0.9, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      className="flex flex-col items-center gap-4 z-10"
+                    >
+                      <div className="text-4xl animate-bounce">⚔️</div>
+                      <div
+                        className="text-xl font-bold"
+                        style={{
+                          color: "var(--col-text)",
+                          fontFamily: "var(--font-heading, Outfit, sans-serif)",
+                        }}
+                      >
+                        {pendingChallenger.name} wants to duel you!
+                      </div>
+                      <p
+                        className="text-xs"
+                        style={{ color: "var(--col-text-muted)" }}
+                      >
+                        Accept the challenge to start camera calibration.
+                      </p>
+
+                      <div className="flex gap-3 mt-2">
+                        <button
+                          onClick={handleAcceptChallenge}
+                          disabled={isAccepting}
+                          className="btn-primary px-6 py-2.5 text-sm"
+                        >
+                          {isAccepting ? "Accepting..." : "✓ Accept Challenge"}
+                        </button>
+                        <button
+                          onClick={handleDeclineChallenge}
+                          className="btn-secondary px-4 py-2.5 text-sm"
+                        >
+                          ✕ Decline
+                        </button>
+                      </div>
+                    </motion.div>
+                  ) : phase === "requesting" ? (
+                    /* Challenger Requesting State */
+                    <div className="flex flex-col items-center gap-3">
+                      <div
+                        className="w-10 h-10 border-3 border-t-transparent rounded-full animate-spin"
+                        style={{
+                          borderColor: "var(--col-cyan)",
+                          borderTopColor: "transparent",
+                        }}
+                      />
+                      <div
+                        className="font-bold text-lg"
+                        style={{
+                          color: "var(--col-text)",
+                          fontFamily: "var(--font-heading, Outfit, sans-serif)",
+                        }}
+                      >
+                        Challenging Host...
+                      </div>
+                      <p
+                        className="text-xs max-w-xs"
+                        style={{ color: "var(--col-text-muted)" }}
+                      >
+                        Waiting for the host to accept your duel request.
+                      </p>
+                    </div>
+                  ) : (
+                    /* Standard Opponent Connected or Waiting */
+                    <div className="text-center">
+                      <div
+                        className="w-20 h-20 rounded-full mx-auto mb-4 flex items-center justify-center text-3xl font-bold"
+                        style={{
+                          background:
+                            "linear-gradient(135deg, #ff6b35, #ff3d00)",
+                          fontFamily: "var(--font-heading, Outfit, sans-serif)",
+                        }}
+                      >
+                        {opponentName.charAt(0).toUpperCase()}
+                      </div>
+                      <div
+                        className="font-bold text-lg"
+                        style={{
+                          color: "var(--col-text)",
+                          fontFamily: "var(--font-heading, Outfit, sans-serif)",
+                        }}
+                      >
+                        {opponentName}
+                      </div>
+                      <div
+                        className="text-xs mt-1"
+                        style={{ color: "var(--col-text-muted)" }}
+                      >
+                        {opponentConnected
+                          ? "Connected"
+                          : "Waiting for challenger..."}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Decorative corners */}
+                  <div
+                    className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 rounded-tl-lg"
+                    style={{ borderColor: "var(--col-orange)" }}
+                  />
+                  <div
+                    className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 rounded-tr-lg"
+                    style={{ borderColor: "var(--col-orange)" }}
+                  />
+                  <div
+                    className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 rounded-bl-lg"
+                    style={{ borderColor: "var(--col-orange)" }}
+                  />
+                  <div
+                    className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 rounded-br-lg"
+                    style={{ borderColor: "var(--col-orange)" }}
+                  />
                 </div>
               </div>
-            )}
-          </div>
-        )}
+
+              {/* Waiting for Challenger Bar — Host can see room code + copy link */}
+              {phase === "waiting" && !pendingChallenger && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="glass-panel p-4 text-center mb-6"
+                >
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div className="text-left">
+                      <div
+                        className="text-sm font-bold"
+                        style={{
+                          color: "var(--col-text)",
+                          fontFamily: "var(--font-heading, Outfit, sans-serif)",
+                        }}
+                      >
+                        📷 Camera active! Adjust your setup while waiting.
+                      </div>
+                      <div
+                        className="text-xs"
+                        style={{ color: "var(--col-text-muted)" }}
+                      >
+                        Share this arena link with your challenger to duel.
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <div
+                        className="px-4 py-2 rounded-xl font-black tracking-widest text-lg"
+                        style={{
+                          background: "rgba(0, 0, 0, 0.4)",
+                          border: "1px solid var(--col-purple)",
+                          color: "var(--col-cyan)",
+                          fontFamily: "var(--font-heading, Outfit, sans-serif)",
+                        }}
+                      >
+                        {roomCode}
+                      </div>
+                      <button
+                        onClick={handleCopy}
+                        className="btn-primary text-xs py-2 px-4"
+                      >
+                        {copied ? "✓ Copied Link!" : "🔗 Share Link"}
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Calibration Overlay */}
+              {phase === "calibrating" && (
+                <CalibrationOverlay
+                  step={calibrationStep}
+                  isReady={isReady}
+                  opponentReady={opponentReady}
+                  onStartExtensionCalibration={() => {
+                    setCalibrationStep("extension");
+                    repTrackerRef.current?.startCalibrationExtension();
+                  }}
+                  onStartTopCalibration={() => {
+                    setCalibrationStep("top");
+                    repTrackerRef.current?.startCalibrationTop();
+                  }}
+                  onFinalizeCalibration={() => {
+                    const success =
+                      repTrackerRef.current?.finalizeCalibration();
+                    if (success) {
+                      setCalibrationStep("done");
+                    }
+                  }}
+                  onToggleReady={handleToggleReady}
+                  extensionProgress={extensionProgress}
+                  topProgress={topProgress}
+                />
+              )}
+
+              {/* Live Indicator */}
+              {phase === "fighting" && (
+                <div className="text-center mt-4">
+                  <div
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-full"
+                    style={{
+                      background: "rgba(255, 0, 51, 0.15)",
+                      border: "1px solid rgba(255, 0, 51, 0.3)",
+                    }}
+                  >
+                    <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                    <span
+                      className="text-sm font-bold"
+                      style={{
+                        color: "#ff6b6b",
+                        fontFamily: "var(--font-heading, Outfit, sans-serif)",
+                      }}
+                    >
+                      LIVE — DUEL IN PROGRESS
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
         {/* Finished Phase */}
         {phase === "finished" && (
@@ -925,9 +1024,7 @@ export default function ArenaPage() {
             >
               K.O.
             </div>
-            <p style={{ color: "var(--col-text-muted)" }}>
-              Loading results...
-            </p>
+            <p style={{ color: "var(--col-text-muted)" }}>Loading results...</p>
           </motion.div>
         )}
       </div>

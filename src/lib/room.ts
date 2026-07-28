@@ -28,7 +28,7 @@ export interface Room {
  */
 export async function createRoom(
   playerId: string,
-  playerName: string
+  playerName: string,
 ): Promise<{ roomCode: string; roomId: string } | null> {
   // Try up to 5 times in case of room code collision
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -66,7 +66,7 @@ export async function createRoom(
 export async function joinRoom(
   roomCode: string,
   playerId: string,
-  playerName: string
+  playerName: string,
 ): Promise<Room | null> {
   // First check if room exists and has an open slot
   const { data: room, error: fetchError } = await supabase
@@ -105,12 +105,15 @@ export async function joinRoom(
       status: "calibrating",
     })
     .eq("id", room.id)
-    .eq("player_b_id", null) // Optimistic lock — only update if slot still empty
+    .is("player_b_id", null) // Optimistic lock — only update if slot still empty
     .select("*")
     .single();
 
   if (updateError || !updatedRoom) {
-    console.error("Failed to join room (slot may have been taken):", updateError);
+    console.error(
+      "Failed to join room (slot may have been taken):",
+      updateError,
+    );
     return null;
   }
 
@@ -140,7 +143,7 @@ export async function getRoomByCode(roomCode: string): Promise<Room | null> {
  */
 export async function updateRoomStatus(
   roomId: string,
-  status: Room["status"]
+  status: Room["status"],
 ): Promise<boolean> {
   const { error } = await supabase
     .from("rooms")
