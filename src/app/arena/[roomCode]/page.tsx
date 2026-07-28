@@ -15,7 +15,11 @@ import {
   updateRoomStatus,
   type Room,
 } from "@/lib/room";
-import { initPoseDetector, detectPose } from "@/lib/pose-detection";
+import {
+  initPoseDetector,
+  detectPose,
+  drawPushupOverlay,
+} from "@/lib/pose-detection";
 import { RepTracker } from "@/lib/rep-tracker";
 import {
   createInitialGameState,
@@ -72,10 +76,11 @@ export default function ArenaPage() {
 
   // Calibration state
   const [calibrationStep, setCalibrationStep] = useState<
-    "idle" | "extension" | "top" | "done"
+    "idle" | "down" | "up" | "done"
   >("idle");
-  const [extensionProgress, setExtensionProgress] = useState(0);
-  const [topProgress, setTopProgress] = useState(0);
+  const [downProgress, setDownProgress] = useState(0);
+  const [upProgress, setUpProgress] = useState(0);
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Damage animation state
   const [lastDamageA, setLastDamageA] = useState<number | null>(null);
@@ -90,6 +95,11 @@ export default function ArenaPage() {
   const animFrameRef = useRef<number | null>(null);
   const gameStateRef = useRef<GameState>(createInitialGameState());
   const disconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const webrtcStartedRef = useRef(false);
+
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
 
   // Keep gameStateRef in sync
   useEffect(() => {
@@ -239,6 +249,55 @@ export default function ArenaPage() {
         },
       );
 
+      // WebRTC Signaling
+      channel.on(
+        "broadcast",
+        { event: "webrtc_offer" },
+        async ({ payload }) => {
+          if (!pcRef.current) return;
+          try {
+            await pcRef.current.setRemoteDescription(
+              new RTCSessionDescription(payload.offer),
+            );
+            const answer = await pcRef.current.createAnswer();
+            await pcRef.current.setLocalDescription(answer);
+            channel.send({
+              type: "broadcast",
+              event: "webrtc_answer",
+              payload: { answer },
+            });
+          } catch (e) {
+            console.error("WebRTC answer error:", e);
+          }
+        },
+      );
+
+      channel.on(
+        "broadcast",
+        { event: "webrtc_answer" },
+        async ({ payload }) => {
+          if (!pcRef.current) return;
+          try {
+            await pcRef.current.setRemoteDescription(
+              new RTCSessionDescription(payload.answer),
+            );
+          } catch (e) {
+            console.error("WebRTC set remote error:", e);
+          }
+        },
+      );
+
+      channel.on("broadcast", { event: "webrtc_ice" }, async ({ payload }) => {
+        if (!pcRef.current) return;
+        try {
+          await pcRef.current.addIceCandidate(
+            new RTCIceCandidate(payload.candidate),
+          );
+        } catch (e) {
+          console.error("WebRTC ICE error:", e);
+        }
+      });
+
       // Match Broadcast Events
       channel.on("broadcast", { event: "countdown_start" }, () => {
         setPhase("countdown");
@@ -362,6 +421,10 @@ export default function ArenaPage() {
 
     return () => {
       mounted = false;
+      if (pcRef.current) {
+        pcRef.current.close();
+        pcRef.current = null;
+      }
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);
       }
@@ -417,6 +480,64 @@ export default function ArenaPage() {
     }
     setPendingChallenger(null);
   };
+
+  // Start WebRTC when phase hits calibrating
+  useEffect(() => {
+    if (phase !== "calibrating" || webrtcStartedRef.current) return;
+    webrtcStartedRef.current = true;
+
+    const localStream =
+      (videoRef.current?.srcObject as MediaStream | null) ?? null;
+    if (!localStream) {
+      console.error("No local stream for WebRTC");
+      return;
+    }
+
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    });
+    pcRef.current = pc;
+
+    localStream.getTracks().forEach((track) => {
+      if (localStream.getTrackById(track.id)) {
+        pc.addTrack(track, localStream);
+      }
+    });
+
+    pc.ontrack = (event) => {
+      setRemoteStream(event.streams[0]);
+    };
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate && channelRef.current) {
+        channelRef.current.send({
+          type: "broadcast",
+          event: "webrtc_ice",
+          payload: { candidate: event.candidate },
+        });
+      }
+    };
+
+    if (mySlot === "A" && channelRef.current) {
+      pc.createOffer()
+        .then((offer) => pc.setLocalDescription(offer))
+        .then(() => {
+          channelRef.current!.send({
+            type: "broadcast",
+            event: "webrtc_offer",
+            payload: { offer: pc.localDescription },
+          });
+        })
+        .catch((e) => console.error("WebRTC offer error:", e));
+    }
+  }, [phase, mySlot]);
+
+  // Set remote video srcObject when stream is available
+  useEffect(() => {
+    if (remoteVideoRef.current && remoteStream) {
+      remoteVideoRef.current.srcObject = remoteStream;
+    }
+  }, [remoteStream]);
 
   // Watch for both players ready → start countdown
   useEffect(() => {
@@ -497,37 +618,65 @@ export default function ArenaPage() {
       const keypoints = await detectPose(videoRef.current);
 
       if (keypoints && repTrackerRef.current) {
+        // Draw overlay on canvas
+        const canvas = overlayCanvasRef.current;
+        if (canvas) {
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            canvas.width = videoRef.current.videoWidth || 640;
+            canvas.height = videoRef.current.videoHeight || 480;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const statusLabel =
+              phase === "fighting"
+                ? repTrackerRef.current.currentState === "UP"
+                  ? "⬆️ UP"
+                  : repTrackerRef.current.currentState === "DOWN"
+                    ? "⬇️ DOWN"
+                    : repTrackerRef.current.currentState === "DESCENDING"
+                      ? "↘️ GOING DOWN"
+                      : repTrackerRef.current.currentState === "PUSHING"
+                        ? "↗️ PUSHING UP"
+                        : ""
+                : "";
+
+            drawPushupOverlay(ctx, keypoints, {
+              showHandMarkers: true,
+              stateLabel: statusLabel || undefined,
+            });
+          }
+        }
+
         if (repTrackerRef.current.isCalibrated && phase === "fighting") {
           repTrackerRef.current.processFrame(keypoints);
         } else if (!repTrackerRef.current.isCalibrated) {
           const done = repTrackerRef.current.feedCalibrationFrame(keypoints);
-          if (repTrackerRef.current.calibrationProgress === "extension") {
-            setExtensionProgress(
+          if (repTrackerRef.current.calibrationProgress === "down") {
+            setDownProgress(
               Math.min(
                 100,
                 (((
                   repTrackerRef.current as unknown as {
-                    extensionSamples: unknown[];
+                    downSamples: unknown[];
                   }
-                ).extensionSamples?.length ?? 0) /
+                ).downSamples?.length ?? 0) /
                   15) *
                   100,
               ),
             );
-            if (done) setExtensionProgress(100);
+            if (done) setDownProgress(100);
           }
-          if (repTrackerRef.current.calibrationProgress === "top") {
-            setTopProgress(
+          if (repTrackerRef.current.calibrationProgress === "up") {
+            setUpProgress(
               Math.min(
                 100,
-                (((
-                  repTrackerRef.current as unknown as { topSamples: unknown[] }
-                ).topSamples?.length ?? 0) /
-                  30) *
+                (((repTrackerRef.current as unknown as { upSamples: unknown[] })
+                  .upSamples?.length ?? 0) /
+                  15) *
                   100,
               ),
             );
-            if (done) setTopProgress(100);
+            if (done) setUpProgress(100);
           }
         }
       }
@@ -748,6 +897,10 @@ export default function ArenaPage() {
                     mirror={true}
                     label={`${myName} (You)`}
                     className="w-full"
+                    showOverlay={
+                      phase === "calibrating" || phase === "fighting"
+                    }
+                    overlayCanvas={overlayCanvasRef}
                   />
                   {phase === "calibrating" && (
                     <div
@@ -770,26 +923,43 @@ export default function ArenaPage() {
                     >
                       {calibrationStep === "done"
                         ? "✓ Calibrated"
-                        : "Calibrating..."}
+                        : calibrationStep === "down"
+                          ? "⬇️ Get Down"
+                          : calibrationStep === "up"
+                            ? "⬆️ Push Up"
+                            : "Calibrating..."}
                     </div>
                   )}
                 </div>
 
                 {/* Opponent / Waiting Container */}
                 <div
-                  className="relative rounded-2xl flex items-center justify-center p-6 text-center overflow-hidden"
+                  className="relative rounded-2xl flex items-center justify-center overflow-hidden"
                   style={{
                     background: "rgba(0, 0, 0, 0.3)",
                     border: "2px solid var(--col-border)",
                     aspectRatio: "4/3",
                   }}
                 >
+                  {/* Remote video (WebRTC) */}
+                  {remoteStream ? (
+                    <video
+                      ref={remoteVideoRef}
+                      autoPlay
+                      playsInline
+                      className="w-full h-full object-cover"
+                    />
+                  ) : null}
+
                   {/* Host Accept / Decline Banner */}
                   {pendingChallenger ? (
                     <motion.div
                       initial={{ scale: 0.9, opacity: 0 }}
                       animate={{ scale: 1, opacity: 1 }}
-                      className="flex flex-col items-center gap-4 z-10"
+                      className="flex flex-col items-center gap-4 z-10 absolute inset-0 justify-center p-6"
+                      style={{
+                        background: "rgba(10, 6, 18, 0.85)",
+                      }}
                     >
                       <div className="text-4xl animate-bounce">⚔️</div>
                       <div
@@ -826,7 +996,12 @@ export default function ArenaPage() {
                     </motion.div>
                   ) : phase === "requesting" ? (
                     /* Challenger Requesting State */
-                    <div className="flex flex-col items-center gap-3">
+                    <div
+                      className="flex flex-col items-center gap-3 z-10 absolute inset-0 justify-center p-6"
+                      style={{
+                        background: "rgba(10, 6, 18, 0.85)",
+                      }}
+                    >
                       <div
                         className="w-10 h-10 border-3 border-t-transparent rounded-full animate-spin"
                         style={{
@@ -850,7 +1025,7 @@ export default function ArenaPage() {
                         Waiting for the host to accept your duel request.
                       </p>
                     </div>
-                  ) : (
+                  ) : !remoteStream ? (
                     /* Standard Opponent Connected or Waiting */
                     <div className="text-center">
                       <div
@@ -880,6 +1055,21 @@ export default function ArenaPage() {
                           ? "Connected"
                           : "Waiting for challenger..."}
                       </div>
+                    </div>
+                  ) : null}
+
+                  {/* Opponent name label */}
+                  {remoteStream && (
+                    <div
+                      className="absolute bottom-3 left-3 px-3 py-1 rounded-lg text-xs font-semibold z-20"
+                      style={{
+                        background: "rgba(10, 6, 18, 0.7)",
+                        backdropFilter: "blur(8px)",
+                        color: "var(--col-text)",
+                        fontFamily: "var(--font-heading, Outfit, sans-serif)",
+                      }}
+                    >
+                      {opponentName}
                     </div>
                   )}
 
@@ -958,13 +1148,13 @@ export default function ArenaPage() {
                   step={calibrationStep}
                   isReady={isReady}
                   opponentReady={opponentReady}
-                  onStartExtensionCalibration={() => {
-                    setCalibrationStep("extension");
-                    repTrackerRef.current?.startCalibrationExtension();
+                  onStartDownCalibration={() => {
+                    setCalibrationStep("down");
+                    repTrackerRef.current?.startCalibrationDown();
                   }}
-                  onStartTopCalibration={() => {
-                    setCalibrationStep("top");
-                    repTrackerRef.current?.startCalibrationTop();
+                  onStartUpCalibration={() => {
+                    setCalibrationStep("up");
+                    repTrackerRef.current?.startCalibrationUp();
                   }}
                   onFinalizeCalibration={() => {
                     const success =
@@ -974,8 +1164,8 @@ export default function ArenaPage() {
                     }
                   }}
                   onToggleReady={handleToggleReady}
-                  extensionProgress={extensionProgress}
-                  topProgress={topProgress}
+                  downProgress={downProgress}
+                  upProgress={upProgress}
                 />
               )}
 

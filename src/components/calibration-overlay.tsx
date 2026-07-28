@@ -3,27 +3,27 @@
 import { motion, AnimatePresence } from "framer-motion";
 
 interface CalibrationOverlayProps {
-  step: "idle" | "extension" | "top" | "done";
+  step: "idle" | "down" | "up" | "done";
   isReady: boolean;
   opponentReady: boolean;
-  onStartExtensionCalibration: () => void;
-  onStartTopCalibration: () => void;
+  onStartDownCalibration: () => void;
+  onStartUpCalibration: () => void;
   onFinalizeCalibration: () => void;
   onToggleReady: () => void;
-  extensionProgress: number; // 0-100
-  topProgress: number; // 0-100
+  downProgress: number;
+  upProgress: number;
 }
 
 export default function CalibrationOverlay({
   step,
   isReady,
   opponentReady,
-  onStartExtensionCalibration,
-  onStartTopCalibration,
+  onStartDownCalibration,
+  onStartUpCalibration,
   onFinalizeCalibration,
   onToggleReady,
-  extensionProgress,
-  topProgress,
+  downProgress,
+  upProgress,
 }: CalibrationOverlayProps) {
   return (
     <AnimatePresence mode="wait">
@@ -51,11 +51,22 @@ export default function CalibrationOverlay({
               className="text-sm mb-6"
               style={{ color: "var(--col-text-muted)" }}
             >
-              We need to learn your range of motion. Stand in front of your
-              camera so your upper body is visible, then grab the bar.
+              Get into push-up position in front of your camera. We&apos;ll
+              learn your range of motion to track every rep.
             </p>
+            <div
+              className="text-xs mb-6 p-3 rounded-xl"
+              style={{
+                background: "rgba(0, 245, 212, 0.08)",
+                border: "1px solid rgba(0, 245, 212, 0.2)",
+                color: "var(--col-cyan)",
+              }}
+            >
+              💡 Make sure your full upper body is visible. Green hand markers
+              will appear to confirm your position.
+            </div>
             <button
-              onClick={onStartExtensionCalibration}
+              onClick={onStartDownCalibration}
               className="btn-primary text-base"
             >
               Start Calibration
@@ -63,9 +74,9 @@ export default function CalibrationOverlay({
           </div>
         )}
 
-        {step === "extension" && (
+        {step === "down" && (
           <div className="text-center">
-            <div className="text-5xl mb-4">💪</div>
+            <div className="text-5xl mb-4">⬇️</div>
             <h3
               className="text-xl font-bold mb-2"
               style={{
@@ -73,35 +84,35 @@ export default function CalibrationOverlay({
                 fontFamily: "var(--font-heading, Outfit, sans-serif)",
               }}
             >
-              Step 1: Hang at Full Extension
+              Step 1: Lower Yourself Down
             </h3>
             <p
               className="text-sm mb-4"
               style={{ color: "var(--col-text-muted)" }}
             >
-              Hang from the bar with your arms fully extended. Hold still for a
-              moment.
+              Get into push-up position and lower your chest toward the ground.
+              Bend your elbows to about 90°. Hold steady.
             </p>
 
-            {/* Progress bar */}
-            <div className="w-full h-3 rounded-full overflow-hidden mb-4"
+            <div
+              className="w-full h-3 rounded-full overflow-hidden mb-4"
               style={{ background: "rgba(0,0,0,0.3)" }}
             >
               <motion.div
                 className="h-full rounded-full"
                 style={{
                   background: "linear-gradient(90deg, #7c3aed, #00f5d4)",
-                  width: `${extensionProgress}%`,
+                  width: `${downProgress}%`,
                 }}
                 transition={{ duration: 0.2 }}
               />
             </div>
 
-            {extensionProgress >= 100 && (
+            {downProgress >= 100 && (
               <motion.button
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
-                onClick={onStartTopCalibration}
+                onClick={onStartUpCalibration}
                 className="btn-primary text-base"
               >
                 ✓ Got it! Next Step →
@@ -110,9 +121,9 @@ export default function CalibrationOverlay({
           </div>
         )}
 
-        {step === "top" && (
+        {step === "up" && (
           <div className="text-center">
-            <div className="text-5xl mb-4">🔝</div>
+            <div className="text-5xl mb-4">⬆️</div>
             <h3
               className="text-xl font-bold mb-2"
               style={{
@@ -120,31 +131,31 @@ export default function CalibrationOverlay({
                 fontFamily: "var(--font-heading, Outfit, sans-serif)",
               }}
             >
-              Step 2: Do One Full Rep
+              Step 2: Push All the Way Up
             </h3>
             <p
               className="text-sm mb-4"
               style={{ color: "var(--col-text-muted)" }}
             >
-              Pull yourself up until your chin is over the bar, then come back
-              down. One clean rep.
+              Push up until your arms are fully extended. Lock your elbows and
+              hold for a moment.
             </p>
 
-            {/* Progress bar */}
-            <div className="w-full h-3 rounded-full overflow-hidden mb-4"
+            <div
+              className="w-full h-3 rounded-full overflow-hidden mb-4"
               style={{ background: "rgba(0,0,0,0.3)" }}
             >
               <motion.div
                 className="h-full rounded-full"
                 style={{
                   background: "linear-gradient(90deg, #ff6b35, #ffd700)",
-                  width: `${topProgress}%`,
+                  width: `${upProgress}%`,
                 }}
                 transition={{ duration: 0.2 }}
               />
             </div>
 
-            {topProgress >= 100 && (
+            {upProgress >= 100 && (
               <motion.button
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
@@ -185,7 +196,9 @@ export default function CalibrationOverlay({
                     ? "bg-green-500/20 border-2 border-green-500 text-green-400"
                     : "btn-primary"
                 }`}
-                style={{ fontFamily: "var(--font-heading, Outfit, sans-serif)" }}
+                style={{
+                  fontFamily: "var(--font-heading, Outfit, sans-serif)",
+                }}
               >
                 {isReady ? "✓ READY!" : "I'm Ready"}
               </button>

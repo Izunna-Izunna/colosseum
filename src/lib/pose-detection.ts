@@ -15,7 +15,7 @@ export interface Keypoint {
 export interface PoseDetector {
   estimatePoses(
     image: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement,
-    config?: unknown
+    config?: unknown,
   ): Promise<{ keypoints: Keypoint[] }[]>;
 }
 
@@ -92,7 +92,7 @@ export async function initPoseDetector(): Promise<PoseDetector> {
     // Load TensorFlow.js core runtime first
     if (!window.tf) {
       await loadScript(
-        "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"
+        "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js",
       );
     }
     if (window.tf?.ready) {
@@ -102,7 +102,7 @@ export async function initPoseDetector(): Promise<PoseDetector> {
     // Load Pose Detection model script
     if (!window.poseDetection) {
       await loadScript(
-        "https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js"
+        "https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js",
       );
     }
 
@@ -112,7 +112,8 @@ export async function initPoseDetector(): Promise<PoseDetector> {
     }
 
     detector = await pd.createDetector(pd.SupportedModels.MoveNet, {
-      modelType: pd.movenet?.modelType?.SINGLEPOSE_LIGHTNING || "SinglePose.Lightning",
+      modelType:
+        pd.movenet?.modelType?.SINGLEPOSE_LIGHTNING || "SinglePose.Lightning",
       enableSmoothing: true,
       minPoseScore: 0.25,
     });
@@ -131,7 +132,7 @@ export async function initPoseDetector(): Promise<PoseDetector> {
  * Returns keypoints array or null if detection fails.
  */
 export async function detectPose(
-  video: HTMLVideoElement
+  video: HTMLVideoElement,
 ): Promise<Keypoint[] | null> {
   if (!detector) return null;
   if (video.readyState < 2) return null; // Video not ready
@@ -154,7 +155,7 @@ export async function detectPose(
 export function calculateAngle(
   a: Keypoint,
   b: Keypoint, // The joint
-  c: Keypoint
+  c: Keypoint,
 ): number {
   const radians =
     Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
@@ -207,16 +208,113 @@ export function calculateElbowAngle(keypoints: Keypoint[]): number {
 }
 
 /**
- * Check if the chin/nose is above a calibrated bar reference height.
+ * Get wrist positions for drawing hand markers.
+ * Returns left and right wrist coordinates with confidence check.
  */
-export function isChinAboveBar(
+export function getWristPositions(keypoints: Keypoint[]): {
+  left: { x: number; y: number } | null;
+  right: { x: number; y: number } | null;
+} {
+  const leftWrist = keypoints[KEYPOINTS.LEFT_WRIST];
+  const rightWrist = keypoints[KEYPOINTS.RIGHT_WRIST];
+
+  return {
+    left:
+      leftWrist && (leftWrist.score ?? 0) > 0.3
+        ? { x: leftWrist.x, y: leftWrist.y }
+        : null,
+    right:
+      rightWrist && (rightWrist.score ?? 0) > 0.3
+        ? { x: rightWrist.x, y: rightWrist.y }
+        : null,
+  };
+}
+
+/**
+ * Draw green hand position markers (bands/stripes) on the canvas overlay.
+ * Shows where the user's hands are positioned during calibration.
+ */
+export function drawHandMarkers(
+  ctx: CanvasRenderingContext2D,
   keypoints: Keypoint[],
-  barY: number
-): boolean {
-  const nose = keypoints[KEYPOINTS.NOSE];
-  if (!nose || (nose.score ?? 0) < 0.3) return false;
-  // In video coordinates, Y increases downward, so "above" means smaller Y
-  return nose.y < barY;
+  color: string = "#00ff88",
+): void {
+  const { left, right } = getWristPositions(keypoints);
+
+  const drawMarker = (pos: { x: number; y: number }) => {
+    const bandWidth = 14;
+    const bandHeight = 60;
+
+    ctx.save();
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 15;
+
+    ctx.fillStyle = "rgba(0, 255, 136, 0.2)";
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.roundRect(
+      pos.x - bandWidth / 2,
+      pos.y - bandHeight / 2,
+      bandWidth,
+      bandHeight,
+      6,
+    );
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = color;
+    ctx.font = "bold 10px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("HAND", pos.x, pos.y + bandHeight / 2 + 14);
+    ctx.restore();
+  };
+
+  if (left) drawMarker(left);
+  if (right) drawMarker(right);
+}
+
+/**
+ * Draw a full push-up overlay: skeleton + hand markers + rep state label.
+ */
+export function drawPushupOverlay(
+  ctx: CanvasRenderingContext2D,
+  keypoints: Keypoint[],
+  options: {
+    skeletonColor?: string;
+    markerColor?: string;
+    showHandMarkers?: boolean;
+    stateLabel?: string;
+    minConfidence?: number;
+  } = {},
+): void {
+  const {
+    skeletonColor = "#00f5d4",
+    markerColor = "#00ff88",
+    showHandMarkers = true,
+    stateLabel,
+    minConfidence = 0.3,
+  } = options;
+
+  drawSkeleton(ctx, keypoints, skeletonColor, minConfidence);
+
+  if (showHandMarkers) {
+    drawHandMarkers(ctx, keypoints, markerColor);
+  }
+
+  if (stateLabel) {
+    ctx.save();
+    ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+    ctx.roundRect(8, 8, 90, 28, 8);
+    ctx.fill();
+    ctx.fillStyle = "#00f5d4";
+    ctx.font = "bold 13px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(stateLabel, 53, 27);
+    ctx.restore();
+  }
 }
 
 /**
@@ -251,7 +349,7 @@ export function drawSkeleton(
   ctx: CanvasRenderingContext2D,
   keypoints: Keypoint[],
   color: string = "#00f5d4",
-  minConfidence: number = 0.3
+  minConfidence: number = 0.3,
 ): void {
   // Draw keypoints
   for (const kp of keypoints) {
@@ -279,7 +377,13 @@ export function drawSkeleton(
   for (const [i, j] of connections) {
     const a = keypoints[i];
     const b = keypoints[j];
-    if (!a || !b || (a.score ?? 0) < minConfidence || (b.score ?? 0) < minConfidence) continue;
+    if (
+      !a ||
+      !b ||
+      (a.score ?? 0) < minConfidence ||
+      (b.score ?? 0) < minConfidence
+    )
+      continue;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);

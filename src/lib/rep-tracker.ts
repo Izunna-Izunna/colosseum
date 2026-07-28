@@ -1,39 +1,13 @@
-/**
- * Rep Tracker — State machine for counting valid pull-up reps.
- *
- * States:
- *   IDLE → HANGING (full extension) → PULLING (moving up) →
- *   TOP (chin above bar) → DESCENDING → HANGING (rep complete!)
- *
- * A rep only counts if ALL conditions are met:
- *   1. Starting position: elbow angle > 160° (full extension)
- *   2. Top position: nose/chin crosses above calibrated bar reference
- *   3. Returns to full extension before the next rep counts
- */
-
 import type { Keypoint } from "./pose-detection";
-import {
-  calculateElbowAngle,
-  isChinAboveBar,
-  getUpperBodyConfidence,
-} from "./pose-detection";
+import { calculateElbowAngle, getUpperBodyConfidence } from "./pose-detection";
 
-export type RepState =
-  | "IDLE"
-  | "HANGING"
-  | "PULLING"
-  | "TOP"
-  | "DESCENDING";
+export type RepState = "IDLE" | "UP" | "DESCENDING" | "DOWN" | "PUSHING";
 
 export interface CalibrationData {
-  /** Elbow angle at full extension (baseline) */
-  extensionAngle: number;
-  /** Y-coordinate of nose at the top of a rep (bar reference line) */
-  barReferenceY: number;
-  /** The threshold angle to consider "fully extended" (usually extensionAngle - 15) */
-  extensionThreshold: number;
-  /** The threshold angle to detect upward movement (usually extensionAngle - 40) */
-  pullingThreshold: number;
+  upAngle: number;
+  downAngle: number;
+  descendThreshold: number;
+  ascendThreshold: number;
 }
 
 export interface RepTrackerCallbacks {
@@ -48,10 +22,9 @@ export class RepTracker {
   private calibration: CalibrationData | null = null;
   private callbacks: RepTrackerCallbacks;
 
-  // Calibration collection
-  private extensionSamples: number[] = [];
-  private topSamples: number[] = [];
-  private calibrationStep: "idle" | "extension" | "top" | "done" = "idle";
+  private downSamples: number[] = [];
+  private upSamples: number[] = [];
+  private calibrationStep: "idle" | "down" | "up" | "done" = "idle";
 
   constructor(callbacks: RepTrackerCallbacks) {
     this.callbacks = callbacks;
@@ -69,163 +42,128 @@ export class RepTracker {
     return this.calibration !== null;
   }
 
-  get calibrationProgress(): "idle" | "extension" | "top" | "done" {
+  get calibrationProgress(): "idle" | "down" | "up" | "done" {
     return this.calibrationStep;
   }
 
-  /**
-   * Start calibration — Step 1: collect extension samples.
-   * Call this when the user is hanging at full extension.
-   */
-  startCalibrationExtension(): void {
-    this.extensionSamples = [];
-    this.calibrationStep = "extension";
+  startCalibrationDown(): void {
+    this.downSamples = [];
+    this.calibrationStep = "down";
   }
 
-  /**
-   * Start calibration — Step 2: collect top position samples.
-   * Call this when the user does a rep to the top.
-   */
-  startCalibrationTop(): void {
-    this.topSamples = [];
-    this.calibrationStep = "top";
+  startCalibrationUp(): void {
+    this.upSamples = [];
+    this.calibrationStep = "up";
   }
 
-  /**
-   * Feed a frame of keypoints during calibration.
-   * Returns true when the current calibration step has enough samples.
-   */
   feedCalibrationFrame(keypoints: Keypoint[]): boolean {
-    if (this.calibrationStep === "extension") {
+    if (this.calibrationStep === "down") {
       const angle = calculateElbowAngle(keypoints);
       if (angle > 0) {
-        this.extensionSamples.push(angle);
+        this.downSamples.push(angle);
       }
-      return this.extensionSamples.length >= 15; // ~0.5s at 30fps
+      return this.downSamples.length >= 15;
     }
 
-    if (this.calibrationStep === "top") {
-      const nose = keypoints[0]; // NOSE
-      if ((nose.score ?? 0) > 0.3) {
-        this.topSamples.push(nose.y);
+    if (this.calibrationStep === "up") {
+      const angle = calculateElbowAngle(keypoints);
+      if (angle > 0) {
+        this.upSamples.push(angle);
       }
-      // We want the minimum Y (highest point)
-      return this.topSamples.length >= 30; // ~1s at 30fps
+      return this.upSamples.length >= 15;
     }
 
     return false;
   }
 
-  /**
-   * Finalize calibration with collected samples.
-   */
   finalizeCalibration(): boolean {
-    if (this.extensionSamples.length < 10 || this.topSamples.length < 10) {
+    if (this.downSamples.length < 10 || this.upSamples.length < 10) {
       return false;
     }
 
-    // Use the median of extension angle samples
-    const sortedAngles = [...this.extensionSamples].sort((a, b) => a - b);
-    const extensionAngle = sortedAngles[Math.floor(sortedAngles.length / 2)];
+    const sortedDown = [...this.downSamples].sort((a, b) => a - b);
+    const downAngle = sortedDown[Math.floor(sortedDown.length / 2)];
 
-    // Use the minimum Y (highest point reached) + small margin
-    const minY = Math.min(...this.topSamples);
-    const barReferenceY = minY + 20; // Give 20px margin of forgiveness
+    const sortedUp = [...this.upSamples].sort((a, b) => a - b);
+    const upAngle = sortedUp[Math.floor(sortedUp.length / 2)];
 
+    const margin = 15;
     this.calibration = {
-      extensionAngle,
-      barReferenceY,
-      extensionThreshold: extensionAngle - 20,
-      pullingThreshold: extensionAngle - 45,
+      upAngle,
+      downAngle,
+      descendThreshold: upAngle - margin,
+      ascendThreshold: downAngle + margin,
     };
 
     this.calibrationStep = "done";
-    this.state = "HANGING";
-    this.callbacks.onStateChange("HANGING");
+    this.state = "UP";
+    this.callbacks.onStateChange("UP");
 
     return true;
   }
 
-  /**
-   * Set calibration data directly (e.g., from stored values).
-   */
   setCalibration(data: CalibrationData): void {
     this.calibration = data;
     this.calibrationStep = "done";
-    this.state = "HANGING";
+    this.state = "UP";
   }
 
-  /**
-   * Process a frame of keypoints during the live duel.
-   * Call this every frame (~30fps) with the latest pose data.
-   */
   processFrame(keypoints: Keypoint[]): void {
     if (!this.calibration) return;
 
     const elbowAngle = calculateElbowAngle(keypoints);
-    if (elbowAngle < 0) return; // Can't detect arms
+    if (elbowAngle < 0) return;
 
     const confidence = getUpperBodyConfidence(keypoints);
-    const chinAbove = isChinAboveBar(keypoints, this.calibration.barReferenceY);
 
     switch (this.state) {
-      case "HANGING":
-        // Waiting at full extension — detect upward movement
-        if (elbowAngle < this.calibration.pullingThreshold) {
-          this.setState("PULLING");
-        }
-        break;
-
-      case "PULLING":
-        // Moving upward — check if chin crossed the bar
-        if (chinAbove) {
-          this.setState("TOP");
-        }
-        // If they dropped back to extension without reaching top, reset
-        if (elbowAngle > this.calibration.extensionThreshold) {
-          this.setState("HANGING");
-        }
-        break;
-
-      case "TOP":
-        // At the top — wait for them to start descending
-        if (!chinAbove) {
+      case "UP":
+        if (elbowAngle < this.calibration.descendThreshold) {
           this.setState("DESCENDING");
         }
         break;
 
       case "DESCENDING":
-        // Going back down — rep counts when they return to full extension
-        if (elbowAngle > this.calibration.extensionThreshold) {
-          this.completeRep(confidence);
-          this.setState("HANGING");
+        if (elbowAngle < this.calibration.ascendThreshold) {
+          this.setState("DOWN");
         }
-        // Edge case: they went back up before reaching extension
-        if (chinAbove) {
-          this.setState("TOP");
+        if (elbowAngle > this.calibration.downAngle) {
+          this.setState("UP");
+        }
+        break;
+
+      case "DOWN":
+        if (elbowAngle > this.calibration.ascendThreshold) {
+          this.setState("PUSHING");
+        }
+        break;
+
+      case "PUSHING":
+        if (elbowAngle > this.calibration.descendThreshold) {
+          this.completeRep(confidence);
+          this.setState("UP");
+        }
+        if (elbowAngle < this.calibration.downAngle) {
+          this.setState("DOWN");
         }
         break;
 
       case "IDLE":
-        // Not tracking — check if in extension position to start
-        if (elbowAngle > this.calibration.extensionThreshold) {
-          this.setState("HANGING");
+        if (elbowAngle > this.calibration.downAngle + 10) {
+          this.setState("UP");
         }
         break;
     }
   }
 
-  /**
-   * Reset the tracker to initial state.
-   */
   reset(): void {
     this.state = "IDLE";
     this.currentRep = 0;
     this.lastRepTimestamp = 0;
     this.calibration = null;
     this.calibrationStep = "idle";
-    this.extensionSamples = [];
-    this.topSamples = [];
+    this.downSamples = [];
+    this.upSamples = [];
   }
 
   private setState(newState: RepState): void {
@@ -237,10 +175,7 @@ export class RepTracker {
 
   private completeRep(confidence: number): void {
     const now = Date.now();
-
-    // Minimum time between reps: 0.4s (anti-cheat)
     if (now - this.lastRepTimestamp < 400) return;
-
     this.currentRep++;
     this.lastRepTimestamp = now;
     this.callbacks.onRepCompleted(this.currentRep, confidence);
