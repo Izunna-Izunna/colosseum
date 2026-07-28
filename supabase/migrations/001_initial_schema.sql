@@ -54,6 +54,14 @@ create table if not exists rep_events (
 );
 
 -- ═══════════════════════════════════════════════════
+-- Table Permissions (Grant privileges to anon & authenticated)
+-- ═══════════════════════════════════════════════════
+grant all on table public.rooms to anon, authenticated, service_role;
+grant all on table public.duels to anon, authenticated, service_role;
+grant all on table public.rep_events to anon, authenticated, service_role;
+grant all on table public.gladiators to anon, authenticated, service_role;
+
+-- ═══════════════════════════════════════════════════
 -- Row Level Security (RLS)
 -- ═══════════════════════════════════════════════════
 -- For MVP with guest users, we keep RLS permissive.
@@ -64,22 +72,26 @@ alter table duels enable row level security;
 alter table rep_events enable row level security;
 
 -- Allow anyone to read and insert rooms (MVP guest access)
+drop policy if exists "rooms_read" on rooms;
+drop policy if exists "rooms_insert" on rooms;
+drop policy if exists "rooms_update" on rooms;
 create policy "rooms_read" on rooms for select using (true);
 create policy "rooms_insert" on rooms for insert with check (true);
 create policy "rooms_update" on rooms for update using (true);
 
 -- Allow anyone to read and insert duels
+drop policy if exists "duels_read" on duels;
+drop policy if exists "duels_insert" on duels;
 create policy "duels_read" on duels for select using (true);
 create policy "duels_insert" on duels for insert with check (true);
 
 -- Allow anyone to insert rep events
+drop policy if exists "rep_events_insert" on rep_events;
+drop policy if exists "rep_events_read" on rep_events;
 create policy "rep_events_insert" on rep_events for insert with check (true);
 create policy "rep_events_read" on rep_events for select using (true);
 
 -- ═══════════════════════════════════════════════════
 -- Realtime — enable for rooms table (status updates)
 -- ═══════════════════════════════════════════════════
--- Note: Broadcast and Presence don't require table subscriptions.
--- This is only needed if you want to listen to Postgres changes
--- on the rooms table (optional for MVP).
 alter publication supabase_realtime add table rooms;
